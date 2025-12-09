@@ -1,9 +1,14 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const db = require('../database');
+const { pool, getSetting } = require('../database');
 
 const router = express.Router();
+
+// Get JWT secret from settings or use default
+async function getJWTSecret() {
+  return await getSetting('jwt_secret', process.env.JWT_SECRET || 'fallback-secret-please-change-in-settings');
+}
 
 // Register
 router.post('/register', async (req, res) => {
@@ -19,34 +24,42 @@ router.post('/register', async (req, res) => {
     }
 
     // Check if registration is allowed
-    const allowRegistration = db.prepare('SELECT value FROM settings WHERE key = ?').get('allow_registration');
-    if (allowRegistration && allowRegistration.value === 'false') {
+    const allowRegistration = await getSetting('allow_registration', 'true');
+    if (allowRegistration === 'false') {
       return res.status(403).json({ error: 'Registration is currently disabled' });
     }
 
     // Check if user exists
-    const existingUser = db.prepare('SELECT * FROM users WHERE email = ? OR username = ?').get(email, username);
-    if (existingUser) {
+    const existingUser = await pool.query(
+      'SELECT * FROM users WHERE email = $1 OR username = $2',
+      [email, username]
+    );
+    
+    if (existingUser.rows.length > 0) {
       return res.status(400).json({ error: 'User already exists' });
     }
 
     // Check if this is the first user (will be admin)
-    const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
-    const isFirstUser = userCount.count === 0;
+    const userCount = await pool.query('SELECT COUNT(*) as count FROM users');
+    const isFirstUser = parseInt(userCount.rows[0].count) === 0;
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Insert user
-    const result = db.prepare('INSERT INTO users (username, email, password, is_admin) VALUES (?, ?, ?, ?)').run(username, email, hashedPassword, isFirstUser ? 1 : 0);
+    const result = await pool.query(
+      'INSERT INTO users (username, email, password, is_admin) VALUES ($1, $2, $3, $4) RETURNING id',
+      [username, email, hashedPassword, isFirstUser]
+    );
 
     // Generate token
-    const token = jwt.sign({ userId: result.lastInsertRowid }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const jwtSecret = await getJWTSecret();
+    const token = jwt.sign({ userId: result.rows[0].id }, jwtSecret, { expiresIn: '7d' });
 
     res.status(201).json({
       message: 'User registered successfully',
       token,
-      user: { id: result.lastInsertRowid, username, email, isAdmin: isFirstUser }
+      user: { id: result.rows[0].id, username, email, isAdmin: isFirstUser }
     });
   } catch (error) {
     console.error('Register error:', error);
@@ -64,7 +77,9 @@ router.post('/login', async (req, res) => {
     }
 
     // Find user
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const user = result.rows[0];
+    
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -76,12 +91,13 @@ router.post('/login', async (req, res) => {
     }
 
     // Generate token
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    const jwtSecret = await getJWTSecret();
+    const token = jwt.sign({ userId: user.id }, jwtSecret, { expiresIn: '7d' });
 
     res.json({
       message: 'Login successful',
       token,
-      user: { id: user.id, username: user.username, email: user.email, isAdmin: user.is_admin === 1 }
+      user: { id: user.id, username: user.username, email: user.email, isAdmin: user.is_admin }
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -90,4 +106,3 @@ router.post('/login', async (req, res) => {
 });
 
 module.exports = router;
-

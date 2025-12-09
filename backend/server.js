@@ -8,6 +8,7 @@ const settingsRoutes = require('./routes/settings');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Middleware
 app.use(cors());
@@ -29,7 +30,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // Serve static files in production
-if (process.env.NODE_ENV === 'production') {
+if (NODE_ENV === 'production') {
   const publicPath = path.join(__dirname, 'public');
   app.use(express.static(publicPath));
   
@@ -41,6 +42,7 @@ if (process.env.NODE_ENV === 'production') {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT} and listening on 0.0.0.0`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Environment: ${NODE_ENV}`);
+  console.log(`Database: ${process.env.DATABASE_URL ? 'Connected' : 'Using default'}`);
 });
 

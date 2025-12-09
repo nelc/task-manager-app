@@ -1,27 +1,29 @@
 const express = require('express');
-const db = require('../database');
+const { pool } = require('../database');
 const authMiddleware = require('../middleware/auth');
 const adminMiddleware = require('../middleware/admin');
 
 const router = express.Router();
 
 // Get all settings (public settings only for non-admins)
-router.get('/', authMiddleware, (req, res) => {
+router.get('/', authMiddleware, async (req, res) => {
   try {
-    const user = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(req.userId);
-    const isAdmin = user && user.is_admin === 1;
+    const userResult = await pool.query('SELECT is_admin FROM users WHERE id = $1', [req.userId]);
+    const isAdmin = userResult.rows.length > 0 && userResult.rows[0].is_admin;
 
-    let settings;
+    let result;
     if (isAdmin) {
-      settings = db.prepare('SELECT * FROM settings ORDER BY key').all();
+      result = await pool.query('SELECT * FROM settings ORDER BY key');
     } else {
       // Non-admins can only see certain settings
       const publicKeys = ['app_name', 'allow_registration'];
-      const placeholders = publicKeys.map(() => '?').join(',');
-      settings = db.prepare(`SELECT * FROM settings WHERE key IN (${placeholders}) ORDER BY key`).all(...publicKeys);
+      result = await pool.query(
+        'SELECT * FROM settings WHERE key = ANY($1) ORDER BY key',
+        [publicKeys]
+      );
     }
 
-    res.json(settings);
+    res.json(result.rows);
   } catch (error) {
     console.error('Get settings error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -29,15 +31,15 @@ router.get('/', authMiddleware, (req, res) => {
 });
 
 // Get a specific setting
-router.get('/:key', authMiddleware, (req, res) => {
+router.get('/:key', authMiddleware, async (req, res) => {
   try {
-    const setting = db.prepare('SELECT * FROM settings WHERE key = ?').get(req.params.key);
+    const result = await pool.query('SELECT * FROM settings WHERE key = $1', [req.params.key]);
     
-    if (!setting) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Setting not found' });
     }
 
-    res.json(setting);
+    res.json(result.rows[0]);
   } catch (error) {
     console.error('Get setting error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -45,7 +47,7 @@ router.get('/:key', authMiddleware, (req, res) => {
 });
 
 // Update a setting (admin only)
-router.put('/:key', authMiddleware, adminMiddleware, (req, res) => {
+router.put('/:key', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { value, description } = req.body;
     const { key } = req.params;
@@ -54,18 +56,18 @@ router.put('/:key', authMiddleware, adminMiddleware, (req, res) => {
       return res.status(400).json({ error: 'Value is required' });
     }
 
-    const existing = db.prepare('SELECT * FROM settings WHERE key = ?').get(key);
+    const checkResult = await pool.query('SELECT * FROM settings WHERE key = $1', [key]);
     
-    if (!existing) {
+    if (checkResult.rows.length === 0) {
       return res.status(404).json({ error: 'Setting not found' });
     }
 
-    db.prepare(
-      'UPDATE settings SET value = ?, description = COALESCE(?, description), updated_at = CURRENT_TIMESTAMP WHERE key = ?'
-    ).run(value, description, key);
+    const result = await pool.query(
+      'UPDATE settings SET value = $1, description = COALESCE($2, description), updated_at = CURRENT_TIMESTAMP WHERE key = $3 RETURNING *',
+      [value, description, key]
+    );
 
-    const updated = db.prepare('SELECT * FROM settings WHERE key = ?').get(key);
-    res.json(updated);
+    res.json(result.rows[0]);
   } catch (error) {
     console.error('Update setting error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -73,7 +75,7 @@ router.put('/:key', authMiddleware, adminMiddleware, (req, res) => {
 });
 
 // Create a new setting (admin only)
-router.post('/', authMiddleware, adminMiddleware, (req, res) => {
+router.post('/', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { key, value, description } = req.body;
 
@@ -81,15 +83,17 @@ router.post('/', authMiddleware, adminMiddleware, (req, res) => {
       return res.status(400).json({ error: 'Key and value are required' });
     }
 
-    const existing = db.prepare('SELECT * FROM settings WHERE key = ?').get(key);
-    if (existing) {
+    const existingResult = await pool.query('SELECT * FROM settings WHERE key = $1', [key]);
+    if (existingResult.rows.length > 0) {
       return res.status(400).json({ error: 'Setting already exists' });
     }
 
-    db.prepare('INSERT INTO settings (key, value, description) VALUES (?, ?, ?)').run(key, value, description || '');
+    const result = await pool.query(
+      'INSERT INTO settings (key, value, description) VALUES ($1, $2, $3) RETURNING *',
+      [key, value, description || '']
+    );
 
-    const setting = db.prepare('SELECT * FROM settings WHERE key = ?').get(key);
-    res.status(201).json(setting);
+    res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Create setting error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -97,11 +101,11 @@ router.post('/', authMiddleware, adminMiddleware, (req, res) => {
 });
 
 // Delete a setting (admin only)
-router.delete('/:key', authMiddleware, adminMiddleware, (req, res) => {
+router.delete('/:key', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const result = db.prepare('DELETE FROM settings WHERE key = ?').run(req.params.key);
+    const result = await pool.query('DELETE FROM settings WHERE key = $1', [req.params.key]);
 
-    if (result.changes === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Setting not found' });
     }
 
@@ -113,4 +117,3 @@ router.delete('/:key', authMiddleware, adminMiddleware, (req, res) => {
 });
 
 module.exports = router;
-

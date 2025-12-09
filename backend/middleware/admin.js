@@ -1,14 +1,15 @@
-const db = require('../database');
+const { pool } = require('../database');
 
-const adminMiddleware = (req, res, next) => {
+const adminMiddleware = async (req, res, next) => {
   try {
     if (!req.userId) {
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const user = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(req.userId);
+    const result = await pool.query('SELECT is_admin FROM users WHERE id = $1', [req.userId]);
+    const user = result.rows[0];
     
-    if (!user || user.is_admin !== 1) {
+    if (!user || !user.is_admin) {
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -19,4 +20,3 @@ const adminMiddleware = (req, res, next) => {
 };
 
 module.exports = adminMiddleware;
-

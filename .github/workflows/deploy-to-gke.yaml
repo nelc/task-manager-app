@@ -116,11 +116,9 @@ jobs:
                 - name: NODE_ENV
                   value: "production"
                 - name: DATABASE_URL
-                  value: "sqlite:///app/data/tasks.db"
+                  value: "postgresql://appuser:apppass@${APP_NAME}-db:5432/appdb"
                 - name: PORT
                   value: "8080"
-                - name: JWT_SECRET
-                  value: "production-secret-change-this-${APP_NAME}"
                 livenessProbe:
                   httpGet:
                     path: /health
@@ -220,11 +218,11 @@ jobs:
                 - containerPort: 5432
                 env:
                 - name: POSTGRES_DB
-                  value: appdb
+                  value: "appdb"
                 - name: POSTGRES_USER
-                  value: appuser
+                  value: "appuser"
                 - name: POSTGRES_PASSWORD
-                  value: apppass
+                  value: "apppass"
                 volumeMounts:
                 - name: data
                   mountPath: /var/lib/postgresql/data
