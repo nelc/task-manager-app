@@ -113,10 +113,14 @@ jobs:
                 ports:
                 - containerPort: 8080
                 env:
+                - name: NODE_ENV
+                  value: "production"
                 - name: DATABASE_URL
-                  value: "postgresql://appuser:apppass@${APP_NAME}-db:5432/appdb"
+                  value: "sqlite:///app/data/tasks.db"
                 - name: PORT
                   value: "8080"
+                - name: JWT_SECRET
+                  value: "production-secret-change-this-${APP_NAME}"
                 livenessProbe:
                   httpGet:
                     path: /health
